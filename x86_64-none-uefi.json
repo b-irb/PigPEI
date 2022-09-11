@@ -1,0 +1,38 @@
+{
+    "llvm-target": "x86_64-unknown-windows",
+    "arch": "x86_64",
+    "os": "uefi",
+    "cpu": "x86-64",
+
+    "data-layout": "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128",
+    "target-pointer-width": "64",
+    "target-c-int-width": "32",
+    "max-atomic-width": "64",
+    "features": "-mmx,-sse,+soft-float",
+
+    "is-like-windows": true,
+    "executables": true,
+    "exe-suffix": ".efi",
+
+    "linker": "rust-lld",
+    "linker-flavor": "lld-link",
+    "linker-is-gnu": false,
+    "lld-flavor": "link",
+
+    "pre-link-args": {
+        "lld-link": [
+            "/ENTRY:efi_main",
+            "/SUBSYSTEM:EFI_BOOT_SERVICE_DRIVER"
+        ]
+    },
+
+    "abi-return-struct-as-int": true,
+    "static-position-independent-executables": true,
+    "disable-redzone": true,
+    "stack-probes": {
+        "kind": "call"
+    },
+
+    "emit-debug-gdb-scripts": false
+}
+
