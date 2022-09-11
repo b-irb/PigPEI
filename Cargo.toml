@@ -1,0 +1,16 @@
+[package]
+name = "pig"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+
+[profile.dev]
+panic = "abort"
+strip = "symbols"
+opt-level = "z"
+
+[profile.release]
+panic = "abort"
+strip = "symbols"
+opt-level = "z"
