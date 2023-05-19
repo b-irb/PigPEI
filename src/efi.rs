@@ -1,14 +1,7 @@
 use core::ffi::c_void;
+use crate::Cptr;
 
-#[repr(C)]
-pub struct EfiTableHeader {
-    pub signature:   u64,
-    pub revision:    u32,
-    pub header_size: u32,
-    pub crc32:       u32,
-    pub reserved:    u32,
-}
-
+#[derive(Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Guid {
     pub data1: u32,
@@ -17,84 +10,171 @@ pub struct Guid {
     pub data4: [u8; 8],
 }
 
+impl core::fmt::Display for Guid {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        let data4 = u64::from_be_bytes(self.data4);
+        write!(f, "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+               self.data1, self.data2, self.data3,
+               data4 >> 48, data4 & 0xffffffffffff)
+    }
+}
+
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EfiStatus {
-    Success   = 0,
+    Success = 0,
     LoadError = 1,
-    NotFound  = 14,
+    NotFound = 14,
 }
 
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BootMode {
-    FullConfig                = 0x0,
-    MinimalConfig             = 0x1,
-    NoConfigChanges           = 0x2,
-    FullConfigPlusDiagnostics = 0x3,
-    DefaultSettings           = 0x4,
-    S4Resume                  = 0x5,
-    S5Resume                  = 0x6,
-    MfgModeSettings           = 0x7,
-    S2Resume                  = 0x10,
-    S3Resume                  = 0x11,
-    FlashUpdate               = 0x12,
-    RecoveryMode              = 0x20,
+pub type EfiResult<T> = Result<T, EfiStatus>;
+
+#[repr(C)]
+pub struct TableHeader {
+    pub signature: u64,
+    pub revision: u32,
+    pub header_size: u32,
+    pub crc32: u32,
+    pub reserved: u32,
 }
 
-macro_rules! pei_fn_raw {
-    ($return:ty $(,$args:ty)*) => {
-        extern "efiapi" fn(&&PeiServices $(,$args)*) -> $return
+#[repr(C)]
+pub struct ConfigurationTable {
+    pub vendor_guid: Guid,
+    pub vendor_table: Cptr,
+}
+
+#[macro_export]
+macro_rules! dxe_fn {
+    ($arg1:ty $(,$args:ty)*) => {
+        extern "efiapi" fn($arg1 $(,$args)*) -> EfiStatus
     };
 }
 
-macro_rules! pei_fn {
-    ($leader:ty $(,$args:ty)*) => { pei_fn_raw!(EfiStatus, $leader $(,$args)*) };
-    ()                         => { pei_fn_raw!(EfiStatus) };
+#[repr(C)]
+pub struct BootServices {
+    pub header: TableHeader,
+
+    // Task Priority Services
+    pub raise_tpl: Cptr,
+    pub restore_tpl: Cptr,
+
+    // Memory Services
+    pub allocate_pages: Cptr,
+    pub free_pages: Cptr,
+    pub get_memory_map: Cptr,
+    pub allocate_pool: Cptr,
+    pub free_pool: Cptr,
+
+    // Event & Timer Services
+    pub create_event: extern "efiapi" fn(u32, usize, Cptr, *const Guid,
+                                         *mut c_void) -> EfiStatus,
+    pub set_timer: Cptr,
+    pub wait_for_event: Cptr,
+    pub signal_event: Cptr,
+    pub close_event: Cptr,
+    pub check_event: Cptr,
+
+    // Protocol Handler Services
+    pub install_protocol_interface: Cptr,
+    pub reinstall_protocol_interface: Cptr,
+    pub uninstall_protocol_interface: Cptr,
+    pub handle_protocol: Cptr,
+    pub reserved: Cptr,
+    pub register_protocol_notify: dxe_fn!(*const Guid, Cptr, Cptr),
+    pub locate_handle: Cptr,
+    pub locate_device_path: Cptr,
+    pub install_configuration_table: Cptr,
+
+    // Image Services
+    pub load_image: Cptr,
+    pub start_image: Cptr,
+    pub exit: Cptr,
+    pub unload_image: Cptr,
+    pub exit_boot_services: extern "efiapi" fn(Cptr, usize) -> EfiStatus,
+
+    // Miscellaneous Services
+    pub get_next_monotonic_count: Cptr,
+    pub stall: Cptr,
+    pub set_watchdog_timer: Cptr,
+
+    // Driver Support Services
+    pub connect_controller: Cptr,
+    pub disconnect_controller: Cptr,
+    pub open_protocol: Cptr,
+    pub close_protocol: Cptr,
+    pub open_protocol_information: Cptr,
+
+    // Library Services
+    pub protocol_per_handle: Cptr,
+    pub locate_handle_buffer: Cptr,
+    pub locate_protocol: Cptr,
+    pub install_multiple_protocol_interfaces: Cptr,
+    pub uninstall_multiple_protocol_interfaces: Cptr,
+
+    // 32-bit CRC Services
+    pub calculate_crc32: dxe_fn!(Cptr, usize, *mut c_void),
+
+    // Miscellaneous Services
+    pub copy_mem: Cptr,
+    pub set_mem: Cptr,
+    pub create_event_ex: Cptr,
 }
 
-macro_rules! pei_fn2 {
-    ($leader:ty $(,$args:ty)*) => { pei_fn_raw!((), $leader $(,$args)*) };
+#[macro_export]
+macro_rules! os_fn {
+    ($arg1:ty $(,$args:ty)*) => {
+        extern "efiapi" fn(&RuntimeServices, $arg1 $(,$args)*) -> EfiStatus
+    };
 }
-
 
 #[repr(C)]
-pub struct PeiServices {
-    pub header: EfiTableHeader,
+pub struct RuntimeServices {
+    pub header: TableHeader,
 
-    // PPI Services
-    pub install_ppi:   pei_fn!(),
-    pub reinstall_ppi: pei_fn!(),
-    pub locate_ppi:    pei_fn!(&Guid, usize, *const c_void, &mut *mut c_void),
-    pub notify_ppi:    pei_fn!(),
+    // Time Services
+    pub get_time: Cptr,
+    pub set_time: Cptr,
+    pub get_wakeup_time: Cptr,
+    pub set_wakeup_time: Cptr,
 
-    // Boot Mode Services
-    pub get_boot_mode: pei_fn!(&mut BootMode),
-    pub set_boot_mode: pei_fn!(BootMode),
+    // Virtual Memory Services
+    pub set_virtual_address_map: Cptr,
+    pub convert_pointer: Cptr,
 
-    // HOB Services
-    pub get_hob_list: pei_fn!(&mut *mut c_void),
-    pub set_hob_list: pei_fn!(u16, u16, &mut *mut c_void),
+    // Variable Services
+    pub get_variable: os_fn!(*const u16, *const Guid, *mut u32,
+                             *mut usize, *mut c_void),
+    pub get_next_variable_name: Cptr,
+    pub set_variable: Cptr,
 
-    // Firmware Volume Services
-    pub ffs_find_next_volume:  pei_fn!(),
-    pub ffs_find_next_file:    pei_fn!(),
-    pub ffs_find_section_data: pei_fn!(),
+    // Miscellaneous Services
+    pub get_next_high_monotonic_count: Cptr,
+    pub reset_system: Cptr,
 
-    // PEI Memory Services
-    pub install_pei_memory: pei_fn!(),
-    pub allocate_pages:     pei_fn!(),
-    pub allocate_pool:      pei_fn!(usize, &mut *mut [u8]),
-    pub copy_mem:           pei_fn2!(*mut [u8], *mut [u8], usize),
-    pub set_mem:            pei_fn2!(*mut [u8], usize, u8),
+    // UEFI 2.0 Capsule Services
+    pub update_capsule: Cptr,
+    pub query_capsule_capabilities: Cptr,
 
-    // Status Code Services
-    pub report_status_code: pei_fn!(),
+    // Miscellaneous UEFI 2.0 Service
+    pub query_variable_info: Cptr,
+}
 
-    // Reset Services
-    pub reset_system: pei_fn!(),
-
-    // I/O Abstractions
-    // Additional File System Related Services
+#[allow(dead_code)]
+#[repr(C)]
+pub struct SystemTable {
+    pub header: TableHeader,
+    pub firmware_vendor: *const u16,
+    pub firmware_revision: *const u16,
+    pub con_in_handle: Cptr,
+    pub con_in: Cptr,
+    pub con_out_handle: Cptr,
+    pub con_out: Cptr,
+    pub conn_err_handle: Cptr,
+    pub conn_err: Cptr,
+    pub runtime_services: *mut RuntimeServices,
+    pub boot_services: *mut BootServices,
+    pub num_table_ents: usize,
+    pub config_table: *mut ConfigurationTable,
 }
 

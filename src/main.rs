@@ -2,39 +2,42 @@
 #![no_main]
 #![feature(abi_efiapi)]
 #![feature(panic_info_message)]
+#![feature(pointer_byte_offsets)]
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::ffi;
 
-mod efi;
-mod asm;
 mod uart;
 #[macro_use]
 mod log;
+#[macro_use]
+mod efi;
+#[macro_use]
+mod pei;
+mod asm;
 mod dxe;
+mod hooks;
 
 use asm::{outb, cli, hlt};
-use efi::{EfiStatus, PeiServices, BootMode};
+use efi::{EfiStatus};
+use pei::{PeiServices, BootMode};
 
 type Cptr = *const ffi::c_void;
 
 #[panic_handler]
 pub fn panic(info: &PanicInfo) -> ! {
-    // panic!() macro will provide a default message and always
-    // include the invocation location.
+    // panic will provide a default message and invocation location.
     let message = info.message().unwrap();
     let location = info.location().unwrap();
-    // Write the panic message to the console.
     error!("{} at {}", message, location);
-    // Write to QEMU ISA debug exit device to exit.
+    // Attempt to write to QEMU ISA debug exit device or hcf.
     unsafe { outb(0x501, 1) };
     warn!("QEMU did not quit...");
-    // HLT loop to hang processor since we could not exit.
     loop { unsafe { cli(); hlt() } }
 }
 
-fn get_boot_mode(svc: &&PeiServices) -> BootMode {
+fn get_boot_mode(svc: &&mut PeiServices) -> BootMode {
     let mut boot_mode = BootMode::FullConfig;
     if (svc.get_boot_mode)(svc, &mut boot_mode) != EfiStatus::Success {
         panic!("call to GetBootMode() failed")
@@ -43,7 +46,7 @@ fn get_boot_mode(svc: &&PeiServices) -> BootMode {
 }
 
 #[no_mangle]
-pub extern "efiapi" fn efi_main(_: Cptr, svc: &&PeiServices) -> EfiStatus {
+pub extern "efiapi" fn efi_main(_: Cptr, svc: &mut &mut PeiServices) -> EfiStatus {
     uart::init();
     info!("loaded PigPEI");
 
@@ -53,8 +56,7 @@ pub extern "efiapi" fn efi_main(_: Cptr, svc: &&PeiServices) -> EfiStatus {
         return EfiStatus::Success
     }
 
-    // Launch DXE core to spawn DXE applications/drivers with hooked tables.
-    dxe::launch_dxe_core(svc).expect("failed to launch DXE core");
-
+    // Register callback to hook DXE core and service tables.
+    unsafe { dxe::hook_dxe_core(svc).expect("failed to hook DXE core") };
     EfiStatus::Success
 }
