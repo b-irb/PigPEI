@@ -3,7 +3,6 @@
 import lzma
 import os
 import sys
-from binascii import crc32, hexlify, unhexlify
 from collections import namedtuple
 from struct import calcsize, pack, unpack_from
 
@@ -29,9 +28,12 @@ def align8(x: int) -> int:
         x += 8 - x % 8
     return x
 
-EFI_FIRMWARE_FILE_SYSTEM2_GUID = str2guid("8C8CE5788A3D4F1c9935896185C32DD3")
-EFI_SECTION_GUID_LZMA = str2guid("EE4E5898391442599D6EDC7BD79403CF")
-EFI_PEI_PERMANENT_MEMORY_INSTALLED_PPI = str2guid("F894643DC44942D18EA885BDD8C65BDE")
+EFI_FIRMWARE_FILE_SYSTEM2_GUID = \
+        str2guid("8C8CE5788A3D4F1c9935896185C32DD3")
+EFI_SECTION_GUID_LZMA = \
+        str2guid("EE4E5898391442599D6EDC7BD79403CF")
+EFI_PEI_PERMANENT_MEMORY_INSTALLED_PPI = \
+        str2guid("F894643DC44942D18EA885BDD8C65BDE")
 
 # EFI_FV_FILETYPE
 EFI_FV_FILETYPE_RAW = 0x1
@@ -72,8 +74,6 @@ FileHeader = namedtuple("FileHeader", [
     "state",
 ])
 
-# TODO: extended file (>16MB)
-
 # section size is 24-bit
 FileSectionFmt = "<3BB"
 FileSection = namedtuple("FileSection", [
@@ -111,7 +111,7 @@ FVExtHeader = namedtuple("FVExtHeader", [
 
 def make_checksum(blob: bytearray) -> int:
     chk = 0
-    for idx, byte in enumerate(blob):
+    for byte in blob:
         chk = (chk + byte) & 0xff
     return (0x100 - chk) & 0xff
 
@@ -132,7 +132,6 @@ def get_fvheader_sz(blob: bytes, offset: int = 0) -> int:
         offset = header.ext_header_off
         ext_header = unpack_from(FVExtHeaderFmt, blob, offset=offset)
         ext_header = FVExtHeader._make(ext_header)
-        print(ext_header)
         offset += ext_header.size
     else:
         offset = header.header_len
@@ -158,7 +157,6 @@ def make_file(fname: str, erase_polarity: bool) -> bytes:
         module = f.read()
 
     DEPEX_PUSH = b'\x02'
-    DEPEX_TRUE = b'\x06'
     DEPEX_END  = b'\x08'
     payload = b""
 
@@ -228,18 +226,14 @@ def make_file(fname: str, erase_polarity: bool) -> bytes:
         state = ~state & 0xff
 
     payload[23] = pack("B", state & 0xff)[0]
-    with open("payload.ffs", "wb") as f:
-        f.write(payload)
     return payload
 
-
-def main(fname: str, fv_path: str, new_fv_path: str):
+def main(fname: str, fv_path: str, ffs_file_path: str):
     with open(fv_path, "rb") as fv_handle:
         fv = bytearray(fv_handle.read())
 
     header = unpack_from(FVHeaderFmt, fv)
     header = FVHeader._make(header)
-
     offset = get_fvheader_sz(fv, offset=0)
 
     module_sz = os.stat(fname).st_size
@@ -250,12 +244,12 @@ def main(fname: str, fv_path: str, new_fv_path: str):
         sys.exit("unsupported for non-FFSv2 file systems")
 
     offset += calcsize(FileHeaderFmt)
-
     compressed_section = unpack_from(FileSectionFmt, fv, offset=offset)
-    compressed_section = FileSection._make((make_num(*compressed_section[:3]), compressed_section[3]))
+    compressed_section = FileSection._make((make_num(*compressed_section[:3]),
+                                            compressed_section[3]))
 
     if compressed_section.type != EFI_SECTION_GUID_DEFINED:
-        sys.exit(f"unexpected section type: {section.type} @ {offset:x}")
+        sys.exit(f"unexpected section type: {compressed_section.type} @ {offset:x}")
 
     offset += calcsize(FileSectionFmt)
     section_guid = unpack_from(FileSectionGuidFmt, fv, offset=offset)
@@ -271,72 +265,19 @@ def main(fname: str, fv_path: str, new_fv_path: str):
     except lzma.LZMAError as e:
         sys.exit(f"failed to decompress LZMA section @ {offset:x}: {e}")
 
-    global_offset = offset
-    # reset offset since we are indexing into the decompressed blob
-    offset = 0
-
-    # locate potential firmware volume sections where we can find free space
-    # for canonical file creation
-    fv_cap = FileSection._make((0, EFI_SECTION_ALL))
-    while fv_cap.type != EFI_SECTION_FIRMWARE_VOLUME_IMAGE:
-        offset += fv_cap.size
-        fv_cap = unpack_from(FileSectionFmt, decompressed, offset=offset)
-        fv_cap = FileSection._make((make_num(*fv_cap[:3]), fv_cap[3]))
-
-    print(fv_cap)
-
-    return
-
-    offset += calcsize(FileSectionFmt)
+    # Index into LZMA decompressed region (new offset).
+    offset = calcsize(FileSectionFmt)
     inner_fv = unpack_from(FVHeaderFmt, decompressed, offset=offset)
     inner_fv = FVHeader._make(inner_fv)
-    ERASE_POLARITY = b"\xff\x00"[inner_fv.attributes & EFI_FVB2_ERASE_POLARITY == 0]
-    offset += get_fvheader_sz(decompressed, offset=offset)
-    offset += calcsize(FileHeaderFmt)
+    erase_polarity = b"\xff\x00"[inner_fv.attributes & EFI_FVB2_ERASE_POLARITY == 0]
+    payload = make_file(fname, erase_polarity)
 
-    start_of_entries = offset
-
-    while offset < inner_fv.fv_len:
-        entry = unpack_from(FileHeaderFmt, decompressed, offset=offset)
-        entry = FileHeader._make((*entry[:4], make_num(*entry[4:7]), *entry[7:]))
-
-        # attempt to locate free space by (ab)using capacity heuristics
-        if entry.type == ERASE_POLARITY and entry.attributes == ERASE_POLARITY:
-            free_space_sz = inner_fv.fv_len - offset
-            print(f"found {free_space_sz} bytes of free space")
-            break
-        offset = align8(offset + entry.size)
-
-    if module_sz > free_space_sz:
-        sys.exit(f"need {module_sz - free_space_sz} additional bytes at end of volume")
-
-    # separated into a function for easier editing in the future
-    payload = make_file(fname, ERASE_POLARITY)
-    print(f"inserting payload ({len(payload)} bytes) into volume")
-    # insert payload into remaining free space
-    decompressed[offset:offset+len(payload)] = payload
-
-    compressed = bytearray(lzma.compress(
-        decompressed,
-        format=lzma.FORMAT_ALONE,
-        filters=[{"id": lzma.FILTER_LZMA1}]
-    ))
-
-    # the presence of the new file will affect the compression ratio so the new
-    # LZMA section must be carefully "inserted" rather than blindly overwritten
-    if len(compressed) > compressed_section.size:
-        sys.exit(f"new compressed section is too large ({len(compressed)} bytes)")
-
-    # LzmaCompress appears to need the uncompressed length to succeed
-    compressed[5:13] = pack("<Q", len(decompressed))
-    fv[global_offset:global_offset + len(compressed)] = compressed
-
-    print(f"writing modified firmware image to {new_fv_path}")
-    with open(new_fv_path, "wb") as f:
-        f.write(fv)
+    print(f"writing FFS file to {ffs_file_path}")
+    with open(ffs_file_path, "wb") as f:
+        f.write(payload)
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        sys.exit(f"usage: {sys.argv[0]} <module> <firmware> <new_firmware>")
-    main(fname=sys.argv[1], fv_path=sys.argv[2], new_fv_path=sys.argv[3])
+        sys.exit(f"usage: {sys.argv[0]} <module> <firmware> <ffs_file_out>")
+    main(fname=sys.argv[1], fv_path=sys.argv[2], ffs_file_path=sys.argv[3])
 
