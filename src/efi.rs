@@ -165,7 +165,7 @@ pub struct RuntimeServices {
 pub struct SystemTable {
     pub header: TableHeader,
     pub firmware_vendor: *const u16,
-    pub firmware_revision: *const u16,
+    pub firmware_revision: u32,
     pub con_in_handle: Cptr,
     pub con_in: Cptr,
     pub con_out_handle: Cptr,

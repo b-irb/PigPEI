@@ -16,7 +16,7 @@ qemu-system-x86_64 \
     -s \
     -nographic \
     -machine type=q35,accel=kvm:tcg \
-    -m 512 -hda alpine.img -boot c \
+    -m 512 \
     -drive file=$FV/OVMF_CODE.fd.patched,format=raw,if=pflash \
     -drive file=$FV/OVMF_VARS.fd,format=raw,if=pflash \
     -device isa-debug-exit \

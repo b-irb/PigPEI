@@ -60,40 +60,56 @@ extern "efiapi" fn install_ppi_hook(
     }}
 }
 
-unsafe fn find_and_hook_services(svc: PeiServicesPtr) -> EfiResult<()> {
-    // DxeCore is mapped into the same address space so we can scan the HOBs
-    // directly to find the boot, runtime, and system tables.
-
+pub(crate) unsafe fn find_services(lo: *const u64, hi: *const u64)
+    -> EfiResult<(
+        &'static mut SystemTable,
+        &'static mut BootServices,
+        &'static mut RuntimeServices)> {
     // The service tables include a signature which we can search for.
     // The signatures will be aligned because of struct allocation.
-    const EFI_BOOT_SERVICES_SIGNATURE: u64 = 0x56524553544f4f42u64;
-    const EFI_RUNTIME_SERVICES_SIGNATURE: u64 = 0x56524553544e5552u64;
-    const EFI_SYSTEM_TABLE_SIGNATURE: u64 = 0x5453595320494249u64;
+    const EFI_BOOT_SERVICES_SIGNATURE: u64 = 0x56524553544f4f42;
+    const EFI_RUNTIME_SERVICES_SIGNATURE: u64 = 0x56524553544e5552;
+    const EFI_SYSTEM_TABLE_SIGNATURE: u64 = 0x5453595320494249;
 
-    // The DXE core has an associated EFI_HOB_MEMORY_ALLOCATION_MODULE HOB
-    // which describes the loaded PE32's memory range.
-    let hob = &*find_dxe_core_hob(svc)?;
-    let lo = hob.alloc_header.memory_base_address as *const u64;
-    let hi = lo.byte_add(hob.alloc_header.memory_length as usize);
     // Scan the HOB for the table signatures.
     debug!("scanning address range {:p}-{:p}", lo, hi);
 
-    let system_table = locate_table::<SystemTable>(
-        lo, hi, EFI_SYSTEM_TABLE_SIGNATURE)?;
+    // EFI_SYSTEM_TABLE has its signature lying around for whatever reason
+    // so we have to validate the matching object.
+    let st = locate_table::<SystemTable>(lo, hi, EFI_SYSTEM_TABLE_SIGNATURE)?;
+    let system_table = if st.runtime_services as u64 > 0xffffffff  {
+        let above_st = (st as *const _ as *const u64).add(1);
+        locate_table::<SystemTable>(above_st, hi, EFI_SYSTEM_TABLE_SIGNATURE)?
+    } else {
+        st
+    };
     info!("found EFI_SYSTEM_TABLE at {:p}", system_table);
 
     let boot_services = locate_table::<BootServices>(
         lo, hi, EFI_BOOT_SERVICES_SIGNATURE)?;
     info!("found EFI_BOOT_SERVICES at {:p}", boot_services);
 
-    // NOTE: EFI_RUNTIME_SERVICES is filled out during execution so its
-    // contents are zeroed out.
     let runtime_services = locate_table::<RuntimeServices>(
         lo, hi, EFI_RUNTIME_SERVICES_SIGNATURE)?;
     info!("found EFI_RUNTIME_SERVICES at {:p}", runtime_services);
 
+    Ok((system_table, boot_services, runtime_services))
+}
+
+unsafe fn find_and_hook_services(svc: PeiServicesPtr) -> EfiResult<()> {
+    // DxeCore is mapped into the same address space so we can scan the HOBs
+    // directly to find the boot, runtime, and system tables.
+
+    // The DXE core has an associated EFI_HOB_MEMORY_ALLOCATION_MODULE HOB
+    // which describes the loaded PE32's memory range.
+    let hob = &*find_dxe_core_hob(svc)?;
+    let lo = hob.alloc_header.memory_base_address as *const u64;
+    let hi = lo.byte_add(hob.alloc_header.memory_length as usize);
+
+    let (st, bs, rt) = find_services(lo, hi)?;
+
     // Install the malicious hooks into the tables.
-    hooks::install_dxe_hooks(system_table, boot_services, runtime_services)
+    hooks::install_dxe_hooks(st, bs, rt, lo, hi)
 }
 
 unsafe fn find_dxe_core_hob(
