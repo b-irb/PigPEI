@@ -1,0 +1,19 @@
+PigPEI is a simple UEFI bootkit which can intercept DxeMain by running
+as PEIM during the PEI phase. As a consequence, PigPEI is able to fully
+control DxeMain initialisation and later stages of boot.
+
+PigPEI does not do anything exciting. The bootkit installs a single
+persistent hook to write to UART when ExitBootServices() is called.
+However, it is very straightforward to add additional hooks to manipulate
+the OS (e.g. intercepting GetVariable attempting to read SecureBoot)
+or privileged DXE modules in SMRAM.
+
+PigPEI is limited to OvmfPkg so it will not work out of the box for real
+firmware images. If you want to make it work on real devices then you
+are free to modify the old FFS injector and play around with the code.
+
+To build and run PigPEI in an emulator:
+$ ./run.sh
+
+You will have to compile OVMF then put the necessary files in ./fv.
+If you do not know what that means then this project is not for you.
