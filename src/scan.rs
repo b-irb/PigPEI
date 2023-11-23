@@ -34,13 +34,13 @@ pub unsafe fn hunt_for_tables()
             &'static mut SystemTable,
             &'static mut RuntimeServices)> {
     debug!("searching pages for table signatures");
-    // UEFI is identity mapped so no physical->virtual conversion required.
     let cr3 = read_cr3();
-    debug!("cr3 = {:x}", cr3);
-    // Physical address of 4K aligned PML4 table.
+    // UEFI is identity mapped so no physical->virtual conversion required.
     let pml4 = ((cr3 >> 12) << PAGE_SHIFT) as *const Pml4e;
-
+    debug!("cr3  = {:x}", cr3);
     debug!("PML4 = {:p}", pml4);
+
+    // Iterate all pages in the page hierarchy, ignoring all non-present pages.
     for pml4idx in 0..512 {
         let pml4e = *(pml4.add(pml4idx));
         let pdpt = (get_pfn(pml4e) << PAGE_SHIFT) as *const Pdpte;
@@ -96,6 +96,7 @@ unsafe fn scan_region(mut ptr: *const u64, len: usize)
     let mut st: Option<&'static mut SystemTable>  = None;
     let mut rt: Option<&'static mut RuntimeServices> = None;
 
+    // Make sure there is enough room for the largest table to exist.
     while page_end.offset_from(ptr) > size_of::<RuntimeServices>() as isize {
         ptr = ptr.add(1);
         if *ptr == EFI_SYSTEM_TABLE_SIGNATURE {
@@ -132,6 +133,7 @@ fn is_st_valid(st: &SystemTable) -> bool {
 }
 
 fn is_rt_valid(rt: &RuntimeServices) -> bool {
+    // 1MB region of UEFI is for legacy address range.
     rt.get_time as u64 >= 0x100000 &&
     rt.get_next_high_monotonic_count as u64 >= 0x100000
 }

@@ -76,21 +76,23 @@ unsafe fn find_services(lo: *const u64, hi: *const u64)
 
     // EFI_SYSTEM_TABLE has its signature lying around for whatever reason
     // so we have to validate the matching object.
-    let st = locate_table::<SystemTable>(lo, hi, EFI_SYSTEM_TABLE_SIGNATURE)?;
+    let st = locate_table(lo, hi, EFI_SYSTEM_TABLE_SIGNATURE)?
+        .cast::<SystemTable>().cast_mut().as_mut().unwrap();
     let system_table = if st.runtime_services as u64 > 0xffffffff  {
         let above_st = (st as *const _ as *const u64).add(1);
-        locate_table::<SystemTable>(above_st, hi, EFI_SYSTEM_TABLE_SIGNATURE)?
+        locate_table(above_st, hi, EFI_SYSTEM_TABLE_SIGNATURE)?
+            .cast::<SystemTable>().cast_mut().as_mut().unwrap()
     } else {
         st
     };
     info!("found EFI_SYSTEM_TABLE at {:p}", system_table);
 
-    let boot_services = locate_table::<BootServices>(
-        lo, hi, EFI_BOOT_SERVICES_SIGNATURE)?;
+    let boot_services = locate_table(lo, hi, EFI_BOOT_SERVICES_SIGNATURE)?
+        .cast::<BootServices>().cast_mut().as_mut().unwrap();
     info!("found EFI_BOOT_SERVICES at {:p}", boot_services);
 
-    let runtime_services = locate_table::<RuntimeServices>(
-        lo, hi, EFI_RUNTIME_SERVICES_SIGNATURE)?;
+    let runtime_services = locate_table(lo, hi, EFI_RUNTIME_SERVICES_SIGNATURE)?
+        .cast::<RuntimeServices>().cast_mut().as_mut().unwrap();
     info!("found EFI_RUNTIME_SERVICES at {:p}", runtime_services);
 
     Ok((system_table, boot_services, runtime_services))
@@ -161,11 +163,11 @@ unsafe fn find_dxe_core_hob(svc: &&mut PeiServices)
     Err(EfiStatus::NotFound)
 }
 
-pub unsafe fn locate_table<T>(mut addr: *const u64, hi: *const u64, sig: u64)
-        -> EfiResult<&'static mut T> {
+pub unsafe fn locate_table(mut addr: *const u64, hi: *const u64, sig: u64)
+        -> EfiResult<*const u64> {
     while addr < hi {
         if *addr == sig {
-            return Ok(&mut *addr.cast::<T>().cast_mut());
+            return Ok(addr)
         }
         addr = addr.add(1);
     }

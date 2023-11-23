@@ -28,6 +28,8 @@ pub unsafe fn install_dxe_hooks(
     Ok(())
 }
 
+static mut FIRST_ATTEMPT: bool = true;
+
 // Store the tables so we can refer to them in our hooks.
 static mut BS: MaybeUninit<&mut BootServices> = MaybeUninit::<_>::uninit();
 static mut RT: MaybeUninit<&mut RuntimeServices> = MaybeUninit::<_>::uninit();
@@ -44,16 +46,15 @@ extern "efiapi" fn reg_proto_notify_hook(
     const FIRMWARE_VOLUME_2_PROTOCOL_GUID: Guid
         = guid!("220e73b6-6bdb-4413-8405b974b108619a");
 
-    if unsafe { *guid } == FIRMWARE_VOLUME_2_PROTOCOL_GUID {
+    if unsafe { *guid == FIRMWARE_VOLUME_2_PROTOCOL_GUID && FIRST_ATTEMPT } {
         info!("intercepted DxeMain after initialisation");
+        // We have intercepted DxeMain before other DXE modules but after
+        // the service tables have been relocated. We can hunt then hook.
         if locate_and_hook_tables() != EfiStatus::Success {
             error!("cannot install hooks, failing silently");
         }
-        info!("removing gBS->RegisterProtocolNotify hook");
-        unsafe {
-            BS.assume_init_mut().register_protocol_notify =
-                ORIG_REG_PROTO_NOTIFY
-        };
+        // Ensure that we do not hook the service tables twice.
+        unsafe { FIRST_ATTEMPT = false };
     }
     unsafe { ORIG_REG_PROTO_NOTIFY(guid, event, reg) }
 }
