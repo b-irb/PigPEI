@@ -143,8 +143,7 @@ pub struct RuntimeServices {
     pub convert_pointer: Cptr,
 
     // Variable Services
-    pub get_variable: os_fn!(*const u16, *const Guid, *mut u32,
-                             *mut usize, *mut c_void),
+    pub get_variable: os_fn!(*const u16, &Guid, *mut u32, &mut usize, *mut c_void),
     pub get_next_variable_name: Cptr,
     pub set_variable: Cptr,
 

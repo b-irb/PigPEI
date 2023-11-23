@@ -16,6 +16,12 @@ pub unsafe fn inb(port: u16) -> u8 {
     _data
 }
 
+pub unsafe fn read_cr3() -> u64 {
+    let mut cr3: u64;
+    asm!("mov rax, cr3", out("rax") cr3);
+    cr3
+}
+
 pub unsafe fn hlt() {
     asm!("hlt", options(preserves_flags, nomem, nostack));
 }

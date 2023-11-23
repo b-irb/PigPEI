@@ -17,6 +17,7 @@ mod efi;
 mod pei;
 mod asm;
 mod dxe;
+mod scan;
 mod hooks;
 
 use asm::{outb, cli, hlt};
@@ -49,13 +50,11 @@ fn get_boot_mode(svc: &&mut PeiServices) -> BootMode {
 pub extern "efiapi" fn efi_main(_: Cptr, svc: &mut &mut PeiServices) -> EfiStatus {
     uart::init();
     info!("loaded PigPEI");
-
     // ACPI sleep states will preserve memory but clear various CPU states.
     if matches!(get_boot_mode(svc), BootMode::S2Resume | BootMode::S3Resume |
                                     BootMode::S4Resume | BootMode::S5Resume) {
         return EfiStatus::Success
     }
-
     // Register callback to hook DXE core and service tables.
     unsafe { dxe::hook_dxe_core(svc).expect("failed to hook DXE core") };
     EfiStatus::Success
