@@ -1,19 +1,55 @@
-PigPEI is a simple UEFI bootkit which can intercept DxeMain by running
-as PEIM during the PEI phase. As a consequence, PigPEI is able to fully
-control DxeMain initialisation and later stages of boot.
+PigPEI is a simple UEFI bootkit which can intercept DxeMain by running as PEIM
+during the PEI phase. As a consequence, PigPEI is able to fully control DxeMain
+initialisation and later stages of boot. The Python FFS injector does not work
+with the current build of PigPEI because FFS relocations were too tedious to
+implement so you will need to use UEFITool to inject PigPEI into firmware.
 
-PigPEI does not do anything exciting. The bootkit installs a single
-persistent hook to write to UART when ExitBootServices() is called.
-However, it is very straightforward to add additional hooks to manipulate
-the OS (e.g. intercepting GetVariable attempting to read SecureBoot)
-or privileged DXE modules in SMRAM.
+PigPEI does not do anything exciting. The bootkit installs a single persistent
+hook to write to UART when ExitBootServices() is called.  However, it is very
+straightforward to add additional hooks to manipulate the OS (e.g. intercepting
+GetVariable attempting to read SecureBoot) or privileged DXE modules in SMRAM.
 
 PigPEI is limited to OvmfPkg so it will not work out of the box for real
-firmware images. If you want to make it work on real devices then you
-are free to modify the old FFS injector and play around with the code.
+firmware images. If you want to make it work on real devices then you are free
+to modify the old FFS injector and play around with the code.
+
+You will have to compile OVMF then put the necessary files in ./fv.  If you do
+not know what that means then this project is not for you.
+
+Dependencies:
+- Rust
+- QEMU
+- Python (optional)
+- UEFITool (optional)
 
 To build and run PigPEI in an emulator:
 $ ./run.sh
+...
+[OK] loaded PigPEI
+[??] hooking InstallPpi in EFI_PEI_SERVICES
+[OK] trapped DxeLoadCore before DxeCore is called
+[??] searching for d6a2cb7f-6a18-4e2f-b43b-9920a733700a HOB
+[OK] found DxeCore HOB at 0x1bf58d48
+[??] scanning address range 0x1fe89000-0x1feb7000
+[OK] found EFI_SYSTEM_TABLE at 0x1feaee00
+[OK] found EFI_BOOT_SERVICES at 0x1feae820
+[OK] found EFI_RUNTIME_SERVICES at 0x1feadd80
+[??] verifying table contents are as expected
+[??] gRT->GetTime       = 0x1fe98c72
+[??] gRT->SetTime       = 0x1fe98c67
+[??] gRT->SetWakeupTime = 0x1fe98c72
+[OK] table contents have been successfully validated
+[OK] hooking gBS->RegisterProtocolNotify
+[OK] intercepted DxeMain after initialisation
+[??] searching pages for table signatures
+[??] cr3 = 1fc01000
+[??] PML4 = 0x1fc01000
+[OK] found EFI_SYSTEM_TABLE at 0x1f9ee018
+[OK] found EFI_RUNTIME_SERVICES at 0x1f9eeb98
+[OK] found referential pair of UEFI tables, all tables found
+[??] gST                  = 0x1f9ee018
+[??] gST->RuntimeServices = 0x1f9eeb98
+[??] gST->BootServices    = 0x1feae820
+[OK] installing gBS->ExitBootServices hook
+[OK] removing gBS->RegisterProtocolNotify hook
 
-You will have to compile OVMF then put the necessary files in ./fv.
-If you do not know what that means then this project is not for you.
