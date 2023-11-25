@@ -13,8 +13,11 @@ PigPEI is limited to OvmfPkg so it will not work out of the box for real
 firmware images. If you want to make it work on real devices then you are free
 to modify the old FFS injector and play around with the code.
 
-You will have to compile OVMF then put the necessary files in ./fv.  If you do
-not know what that means then this project is not for you.
+You will have to compile OVMF then put the necessary files in /fv. In addition
+the UEFITool invocation in run.sh expects a file /uuid to be present in the
+target firmware image. You will need to manually put the PEIM in the FFS image
+using UEFITool after building with /toolchain/prepare_ffs_file.py. If you do
+not know what this means then this project is not for you.
 
 Dependencies:
 - Rust
